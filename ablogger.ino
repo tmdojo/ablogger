@@ -20,7 +20,7 @@
 #include <SD.h>
 #include <RTCZero.h>
 
-#include "pitches.h"
+#include "sheet_music.h"
 
 #define DEBOUNCE 5  // button debouncer, how many ms to debounce, 5+ ms is usually plenty
 #define cardSelect 4  // Set the pin used for uSD
@@ -63,16 +63,17 @@ int NextAlarmMin; // Variable to hold next alarm time in minutes
 int NextAlarmHour; // Variable to hold next alarm time in hours
 int pressedButton;
 
-// notes in the melody:
-int melody[] = {
-  NOTE_C4, NOTE_G3, NOTE_G3, NOTE_A3, NOTE_G3, 0, NOTE_B3, NOTE_C4
+int* songs[] = {theEnd, mario1Up, marioPowerUp, marioCoin, shaka};
+int* tempos[] = {theEnd_tempo, mario1Up_tempo, marioPowerUp_tempo, marioCoin_tempo, shaka_tempo};
+int lens[] = {theEnd_length, mario1Up_length, marioPowerUp_length, marioCoin_length, shaka_length};
+int nsongs = sizeof(songs)/sizeof(int);
+enum songsType {
+  THE_END = 0,
+  MARIO_1UP,
+  MARIO_POWER_UP,
+  MARIO_COIN,
+  SHAKA
 };
-
-// note durations: 4 = quarter note, 8 = eighth note, etc.:
-int noteDurations[] = {
-  4, 8, 8, 4, 4, 4, 4, 4
-};
-
 
 //////////////    Setup   ///////////////////
 void setup() {
@@ -80,7 +81,7 @@ void setup() {
   rtc.begin();    // Start the RTC in 24hr mode
   if (setTime){
     rtc.setTime(hours, minutes, seconds);   // Set the time
-    rtc.setDate(day, month, year);    // Set the date    
+    rtc.setDate(day, month, year);    // Set the date
   }
   NextAlarmMin = rtc.getMinutes(); // initialize starting minute
   NextAlarmHour = rtc.getHours();  // initialize starting hour
@@ -97,7 +98,7 @@ void setup() {
     Serial.println("Card init. failed! or Card not present");
     error(2);     // Two red flashes means no card or card init failed.
   }
-  
+
   strcpy(filename, "ANALOG00.CSV");
   for (uint8_t i = 0; i < 100; i++) {
     filename[6] = '0' + i/10;
@@ -149,7 +150,7 @@ void loop() {
   //unsigned long expireMillis = millis() + (30 * 1000); // TEST: wait 30 sec for A/B input
   unsigned long expireMillis = millis() + (15 * 60 * 1000); // wait 15 minutes for A/B input
   if (digitalRead(silentPin) == HIGH){
-    playTone();
+    play_a_song(MARIO_COIN);
   }
   blink(RED,2);             // Quick blink to show we have a pulse
 
@@ -204,12 +205,12 @@ void loop() {
   SdOutput();                 // Output to uSD card
   //logfile.flush();
   logfile.close();
-  blink(GREEN,2); 
-  
+  blink(GREEN,2);
+
   //setAlarmSec();
   //setAlarmMin();
   setAlarmHour();
-  
+
   #ifdef ECHO_TO_SERIAL
     Serial.print("Curret time: ");
     Serial.print(rtc.getDay());
@@ -252,7 +253,7 @@ void loop() {
     Serial.end();
     USBDevice.detach(); // Safely detach the USB prior to sleeping
   #endif
-  
+
   rtc.standbyMode();    // Sleep until next alarm match
 
   #ifdef ECHO_TO_SERIAL
@@ -262,7 +263,7 @@ void loop() {
     delay(100); // delay to wait Serial is ready
   #endif
 
-  
+
   // Code re-starts here after sleep !
 }
 
@@ -405,20 +406,24 @@ int freeram () {
   return &stack_dummy - sbrk(0);
 }
 
-void playTone(){
-  // iterate over the notes of the melody:
-  for (int thisNote = 0; thisNote < 8; thisNote++) {
+void play_a_song(int s){
+  int* song = songs[s];
+  int* tempo = tempos[s];
+  int len = lens[s];
 
-    // to calculate the note duration, take one second divided by the note type.
+  int size = len / sizeof(int);
+  for (int thisNote = 0; thisNote < size; thisNote++) {
+    // to calculate the note duration, take one second
+    // divided by the note type.
     //e.g. quarter note = 1000 / 4, eighth note = 1000/8, etc.
-    int noteDuration = 1000 / noteDurations[thisNote];
-    tone(SPEAKER, melody[thisNote], noteDuration);
-
+    //TODO: make 1000 variable to change speed
+    int noteDuration = 1000 / tempo[thisNote];
+    tone(SPEAKER, song[thisNote], noteDuration);
     // to distinguish the notes, set a minimum time between them.
     // the note's duration + 30% seems to work well:
-    int pauseBetweenNotes = noteDuration * 1.30;
-    delay(pauseBetweenNotes);
+    int pauseBetweenNotes = noteDuration * 1.3;
     // stop the tone playing:
-    noTone(8);
+    delay(pauseBetweenNotes);
+    noTone(SPEAKER);
   }
 }
