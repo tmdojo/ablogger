@@ -1,14 +1,15 @@
 /*
- Low Power logger for Feather M0 Adalogger
+ Low Power A/B test logger
+
+ based on Jonathan Davies's Low Power logger for Feather M0 Adalogger
 
  Uses internal RTC and interrupts to put M0 into deep sleep.
  Output logged to uSD at intervals set
 
- Created by:  Jonathan Davies
- Date:        01/01/16
- Version:     0.3
- Changes: Limited number of file flushes to reduce power
- 
+ Author:  Shunya Sato
+ Date:        15/07/18
+ Version:     0.1
+
 */
 
 ////////////////////////////////////////////////////////////
@@ -17,66 +18,86 @@
 
 #include <SPI.h>
 #include <SD.h>
-#include <RTCZero.h> 
+#include <RTCZero.h>
 
+#include "pitches.h"
+
+#define DEBOUNCE 5  // button debouncer, how many ms to debounce, 5+ ms is usually plenty
 #define cardSelect 4  // Set the pin used for uSD
 #define RED 13 // Red LED on Pin #13
 #define GREEN 8 // Green LED on Pin #8
 #define VBATPIN A7    // Battery Voltage on Pin A7
+#define SPEAKER A0
+const int buttonPinA = 11;    // the number of the pushbutton pin
+const int buttonPinB = 12;    // the number of the pushbutton pin
+const int silentPin = 10;    // pin for set silent
 
-//#ifdef ARDUINO_SAMD_ZERO
-//   #define Serial SerialUSB   // re-defines USB serial from M0 chip so it appears as regular serial
-//#endif
 
 extern "C" char *sbrk(int i); //  Used by FreeRAm Function
 
 //////////////// Key Settings ///////////////////
 
 #define SampleIntSec 15 // RTC - Sample interval in seconds
-#define SamplesPerCycle 60  // Number of samples to buffer before uSD card flush is called
+#define SampleIntMin 1 // RTC - Sample interval in minutes
+#define SampleIntHour 1 // RTC - Sample interval in hour
 
 const int SampleIntSeconds = 500;   //Simple Delay used for testing, ms i.e. 1000 = 1 sec
 
+const bool setTime = false;
 /* Change these values to set the current initial time */
-const byte hours = 18;
-const byte minutes = 50;
+const byte hours = 14;
+const byte minutes = 00;
 const byte seconds = 0;
 /* Change these values to set the current initial date */
-const byte day = 29;
-const byte month = 12;
-const byte year = 15;
+const byte day = 15;
+const byte month = 7;
+const byte year = 18;
 
 /////////////// Global Objects ////////////////////
 RTCZero rtc;    // Create RTC object
 File logfile;   // Create file object
+char filename[15]; // Varialbe for log file name on SD card
 float measuredvbat;   // Variable for battery voltage
 int NextAlarmSec; // Variable to hold next alarm time in seconds
-unsigned int CurrentCycleCount;  // Num of smaples in current cycle, before uSD flush call
+int NextAlarmMin; // Variable to hold next alarm time in minutes
+int NextAlarmHour; // Variable to hold next alarm time in hours
+int pressedButton;
+
+// notes in the melody:
+int melody[] = {
+  NOTE_C4, NOTE_G3, NOTE_G3, NOTE_A3, NOTE_G3, 0, NOTE_B3, NOTE_C4
+};
+
+// note durations: 4 = quarter note, 8 = eighth note, etc.:
+int noteDurations[] = {
+  4, 8, 8, 4, 4, 4, 4, 4
+};
 
 
 //////////////    Setup   ///////////////////
 void setup() {
 
   rtc.begin();    // Start the RTC in 24hr mode
-  rtc.setTime(hours, minutes, seconds);   // Set the time
-  rtc.setDate(day, month, year);    // Set the date
+  if (setTime){
+    rtc.setTime(hours, minutes, seconds);   // Set the time
+    rtc.setDate(day, month, year);    // Set the date    
+  }
+  NextAlarmMin = rtc.getMinutes(); // initialize starting minute
+  NextAlarmHour = rtc.getHours();  // initialize starting hour
 
-   
   #ifdef ECHO_TO_SERIAL
-    while (! Serial); // Wait until Serial is ready
+    //while (! Serial); // Wait until Serial is ready
+    delay(100); // delay to wait Serial is ready
     Serial.begin(115200);
     Serial.println("\r\nFeather M0 Analog logger");
   #endif
-  
-  pinMode(13, OUTPUT);
-
 
   // see if the card is present and can be initialized:
   if (!SD.begin(cardSelect)) {
     Serial.println("Card init. failed! or Card not present");
     error(2);     // Two red flashes means no card or card init failed.
   }
-  char filename[15];
+  
   strcpy(filename, "ANALOG00.CSV");
   for (uint8_t i = 0; i < 100; i++) {
     filename[6] = '0' + i/10;
@@ -89,41 +110,165 @@ void setup() {
 
   logfile = SD.open(filename, FILE_WRITE);
   if( ! logfile ) {
-    Serial.print("Couldnt create "); 
-    Serial.println(filename);
+    #ifdef ECHO_TO_SERIAL
+      Serial.print("Couldnt create ");
+      Serial.println(filename);
+    #endif
     error(3);
   }
-  Serial.print("Writing to "); 
-  Serial.println(filename);
+  #ifdef ECHO_TO_SERIAL
+    Serial.print("Writing to ");
+    Serial.println(filename);
+  #endif
+  writeHeader();
+  logfile.close();
 
-  pinMode(13, OUTPUT);
-  pinMode(8, OUTPUT);
-  Serial.println("Logging ....");
+  pinMode(buttonPinA, INPUT_PULLUP);
+  pinMode(buttonPinB, INPUT_PULLUP);
+  pinMode(silentPin, INPUT_PULLUP);
+
+  pinMode(RED, OUTPUT);
+  pinMode(GREEN, OUTPUT);
+  digitalWrite(RED, LOW);
+  digitalWrite(GREEN, LOW);
+
+  #ifdef ECHO_TO_SERIAL
+    Serial.println("Logging ....");
+  #endif
 }
 
 /////////////////////   Loop    //////////////////////
 void loop() {
+  // this loop runs at every hour
+  #ifdef ECHO_TO_SERIAL
+    Serial.println("start of loop function");
+  #endif
 
-  
-  blink(GREEN,2);             // Quick blink to show we have a pulse
-  CurrentCycleCount += 1;     //  Increment samples in current uSD flush cycle
+  pressedButton = 0;
+  unsigned long startMillis = millis();
+  //unsigned long expireMillis = millis() + (30 * 1000); // TEST: wait 30 sec for A/B input
+  unsigned long expireMillis = millis() + (15 * 60 * 1000); // wait 15 minutes for A/B input
+  if (digitalRead(silentPin) == HIGH){
+    playTone();
+  }
+  blink(RED,2);             // Quick blink to show we have a pulse
+
+  while(pressedButton==0){
+//    #ifdef ECHO_TO_SERIAL
+//      Serial.print(".");
+//    #endif
+    if ( (long)(millis()-expireMillis) >= 0 ){
+      // break if 15 min has passed
+      #ifdef ECHO_TO_SERIAL
+        Serial.println("\r\n time out. Exit while");
+      #endif
+      break;
+    }
+    if ( (millis() - startMillis) > (10 * 1000) ) {
+      #ifdef ECHO_TO_SERIAL
+        Serial.println("\r\n 10 sec passed");
+      #endif
+      // blink every 10 seconds
+      blink(RED,2);             // Quick blink to show we have a pulse
+      startMillis = millis();
+    }
+
+    // check A/B buttons
+    if (!digitalRead(buttonPinA)){
+      delay(DEBOUNCE);
+      if(!digitalRead(buttonPinA)){
+        pressedButton = 1;
+      }
+    }
+    else if (!digitalRead(buttonPinB)){
+      delay(DEBOUNCE);
+      if(!digitalRead(buttonPinB)){
+        pressedButton = 2;
+      }
+    }
+  }
+
 
   #ifdef ECHO_TO_SERIAL
     SerialOutput();           // Only logs to serial if ECHO_TO_SERIAL is uncommented at start of code
   #endif
-  
-  SdOutput();                 // Output to uSD card
 
-  // Code to limit the number of power hungry writes to the uSD
-  if( CurrentCycleCount >= SamplesPerCycle ) {
-    logfile.flush();
-    CurrentCycleCount = 0;
+  logfile = SD.open(filename, FILE_WRITE);
+  if( ! logfile ) {
     #ifdef ECHO_TO_SERIAL
-      Serial.println("logfile.flush() called");
+      Serial.print("Couldnt create ");
+      Serial.println(filename);
     #endif
+    error(3);
   }
+  SdOutput();                 // Output to uSD card
+  //logfile.flush();
+  logfile.close();
+  blink(GREEN,2); 
+  
+  //setAlarmSec();
+  //setAlarmMin();
+  setAlarmHour();
+  
+  #ifdef ECHO_TO_SERIAL
+    Serial.print("Curret time: ");
+    Serial.print(rtc.getDay());
+    Serial.print("/");
+    Serial.print(rtc.getMonth());
+    Serial.print("/");
+    Serial.print(rtc.getYear()+2000);
+    Serial.print(" ");
+    Serial.print(rtc.getHours());
+    Serial.print(":");
+    if(rtc.getMinutes() < 10)
+      Serial.print('0');      // Trick to add leading zero for formatting
+    Serial.print(rtc.getMinutes());
+    Serial.print(":");
+    if(rtc.getSeconds() < 10)
+      Serial.print('0');      // Trick to add leading zero for formatting
+    Serial.println(rtc.getSeconds());
+
+    Serial.print("Wake up at: ");
+    Serial.print(rtc.getAlarmDay());
+    Serial.print("/");
+    Serial.print(rtc.getAlarmMonth());
+    Serial.print("/");
+    Serial.print(rtc.getAlarmYear()+2000);
+    Serial.print(" ");
+    Serial.print(rtc.getAlarmHours());
+    Serial.print(":");
+    if(rtc.getAlarmMinutes() < 10)
+      Serial.print('0');      // Trick to add leading zero for formatting
+    Serial.print(rtc.getAlarmMinutes());
+    Serial.print(":");
+    if(rtc.getAlarmSeconds() < 10)
+      Serial.print('0');      // Trick to add leading zero for formatting
+    Serial.println(rtc.getAlarmSeconds());
+
+    Serial.println("Good night!");
+  #endif
+
+  #ifdef ECHO_TO_SERIAL
+    Serial.end();
+    USBDevice.detach(); // Safely detach the USB prior to sleeping
+  #endif
+  
+  rtc.standbyMode();    // Sleep until next alarm match
+
+  #ifdef ECHO_TO_SERIAL
+    USBDevice.attach();   // Re-attach the USB, audible sound on windows machines
+    Serial.begin(115200);
+    //while (! Serial); // Wait until Serial is ready
+    delay(100); // delay to wait Serial is ready
+  #endif
 
   
+  // Code re-starts here after sleep !
+}
+
+///////////////   Functions   //////////////////
+
+void setAlarmSec(){
   ///////// Interval Timing and Sleep Code ////////////////
   delay(SampleIntSeconds);   // Simple delay for testing only interval set by const in header
 
@@ -132,22 +277,31 @@ void loop() {
   rtc.enableAlarm(rtc.MATCH_SS); // Match seconds only
   rtc.attachInterrupt(alarmMatch); // Attaches function to be called, currently blank
   delay(50); // Brief delay prior to sleeping not really sure its required
-  
-  rtc.standbyMode();    // Sleep until next alarm match
-  
-  // Code re-starts here after sleep !
-
 }
+void setAlarmMin(){
+  ///////// Interval Timing and Sleep Code ////////////////
+  delay(SampleIntSeconds);   // Simple delay for testing only interval set by const in header
 
-///////////////   Functions   //////////////////
+  NextAlarmMin = (NextAlarmMin + SampleIntMin) % 60;   // i.e. 65 becomes 5
+  rtc.setAlarmMinutes(NextAlarmMin); // RTC time to wake, currently seconds only
+  rtc.enableAlarm(rtc.MATCH_MMSS); // Match minutes
+  rtc.attachInterrupt(alarmMatch); // Attaches function to be called, currently blank
+  delay(50); // Brief delay prior to sleeping not really sure its required
+}
+void setAlarmHour(){
+  ///////// Interval Timing and Sleep Code ////////////////
+  delay(SampleIntSeconds);   // Simple delay for testing only interval set by const in header
+
+  NextAlarmHour = (NextAlarmHour + SampleIntHour) % 24;   // i.e. 65 becomes 5
+  rtc.setAlarmHours(NextAlarmHour); // RTC time to wake, currently seconds only
+  rtc.enableAlarm(rtc.MATCH_HHMMSS); // Match seconds only
+  rtc.attachInterrupt(alarmMatch); // Attaches function to be called, currently blank
+  delay(50); // Brief delay prior to sleeping not really sure its required
+}
 
 // Debbugging output of time/date and battery voltage
 void SerialOutput() {
 
-  Serial.print(CurrentCycleCount);
-  Serial.print(":");
-  Serial.print(freeram ());
-  Serial.print("-");
   Serial.print(rtc.getDay());
   Serial.print("/");
   Serial.print(rtc.getMonth());
@@ -164,7 +318,11 @@ void SerialOutput() {
     Serial.print('0');      // Trick to add leading zero for formatting
   Serial.print(rtc.getSeconds());
   Serial.print(",");
-  Serial.println(BatteryVoltage ());   // Print battery voltage  
+  Serial.print(pressedButton);   // Print battery voltage
+  Serial.print(",");
+  Serial.print(BatteryVoltage ());   // Print battery voltage
+  Serial.print(",");
+  Serial.println(freeram ());
 }
 
 // Print data and time followed by battery voltage to SD card
@@ -176,8 +334,6 @@ void SdOutput() {
   //}
 
   // Formatting for file out put dd/mm/yyyy hh:mm:ss, [sensor output]
-  logfile.print(CurrentCycleCount);
-  logfile.print("-");
   logfile.print(rtc.getDay());
   logfile.print("/");
   logfile.print(rtc.getMonth());
@@ -194,12 +350,14 @@ void SdOutput() {
     logfile.print('0');      // Trick to add leading zero for formatting
   logfile.print(rtc.getSeconds());
   logfile.print(",");
+  logfile.print(pressedButton);   // Print selected button
+  logfile.print(",");
   logfile.println(BatteryVoltage ());   // Print battery voltage
 }
 
 // Write data header.
 void writeHeader() {
-  logfile.println("DD:MM:YYYY hh:mm:ss, Battery Voltage");
+  logfile.println("DD/MM/YYYY hh:mm:ss, Button, Battery Voltage");
 }
 
 // blink out an error code
@@ -207,9 +365,9 @@ void error(uint8_t errno) {
   while(1) {
     uint8_t i;
     for (i=0; i<errno; i++) {
-      digitalWrite(13, HIGH);
+      digitalWrite(RED, HIGH);
       delay(100);
-      digitalWrite(13, LOW);
+      digitalWrite(RED, LOW);
       delay(100);
     }
     for (i=errno; i<10; i++) {
@@ -238,9 +396,8 @@ float BatteryVoltage () {
   return measuredvbat;
 }
 
-void alarmMatch() // Do something when interrupt called
-{
-  
+// Do something when interrupt called
+void alarmMatch() {
 }
 
 int freeram () {
@@ -248,3 +405,20 @@ int freeram () {
   return &stack_dummy - sbrk(0);
 }
 
+void playTone(){
+  // iterate over the notes of the melody:
+  for (int thisNote = 0; thisNote < 8; thisNote++) {
+
+    // to calculate the note duration, take one second divided by the note type.
+    //e.g. quarter note = 1000 / 4, eighth note = 1000/8, etc.
+    int noteDuration = 1000 / noteDurations[thisNote];
+    tone(SPEAKER, melody[thisNote], noteDuration);
+
+    // to distinguish the notes, set a minimum time between them.
+    // the note's duration + 30% seems to work well:
+    int pauseBetweenNotes = noteDuration * 1.30;
+    delay(pauseBetweenNotes);
+    // stop the tone playing:
+    noTone(8);
+  }
+}
