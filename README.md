@@ -20,8 +20,33 @@ The device would beep at certain interval, say every hour, prompting user to pus
 
 To be added...
 
+## for v0.1
+
 | Feather | component | Note |
 | A0 | Piezo | The other leg is connected to GND |
 | 11 | Button A | The other leg is connected to GND |
 | 12 | Button B | The other leg is connected to GND |
 | 10 | Slide switch | Middle leg is connected to GND and the other left floating |
+
+## for v1.0 PCB
+
+| Feather | component | Note |
+| A0 | Piezo | The other leg is connected to GND |
+| 11 | Button A | The other leg is connected to GND |
+| 12 | Button B | The other leg is connected to GND |
+| 10 | Slide switch | Middle leg is connected to GND and the other left floating |
+| 5 | SDCS | CS for SD card of adafruit Adalogger FeatherWing|
+| 9 | battery monitor | Feather buit-in voltage divider |
+| 6 | RTC INT | RTC INT from adafruit Adalogger FeatherWing|
+
+
+## for v1.1 PCB
+
+| Feather | component | Note |
+| A0 | Piezo | The other leg is connected to GND |
+| 11 | Button A | The other leg is connected to GND |
+| 12 | Button B | The other leg is connected to GND |
+| 5 | Slide switch | Middle leg is connected to GND and the other left floating |
+| 10 | SDCS | CS for SD card of adafruit Adalogger FeatherWing |
+| 9 | battery monitor | Feather buit-in voltage divider |
+| 6 | RTC INT | RTC INT from adafruit Adalogger FeatherWing|
