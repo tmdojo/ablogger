@@ -27,6 +27,7 @@ To be added...
 | 11 | Button A | The other leg is connected to GND |
 | 12 | Button B | The other leg is connected to GND |
 | 10 | Slide switch | Middle leg is connected to GND and the other left floating |
+| 4 | SDCS | CS for SD card of Adafruit Adalogger M0 |
 
 ## for v1.0 PCB
 
@@ -36,11 +37,11 @@ To be added...
 | 12 | Button B | The other leg is connected to GND |
 | 10 | Slide switch | Middle leg is connected to GND and the other left floating |
 | 5 | SDCS | CS for SD card of adafruit Adalogger FeatherWing|
-| 9 | battery monitor | Feather buit-in voltage divider |
-| 6 | RTC INT | RTC INT from adafruit Adalogger FeatherWing|
+| 9(A7) | battery monitor | Feather buit-in voltage divider |
+| 6 | RTC INT | RTC INT from adafruit Adalogger FeatherWing <-- Not used|
 
 
-## for v1.1 PCB
+## for v1.1 PCB (to be designed)
 
 | Feather | component | Note |
 | A0 | Piezo | The other leg is connected to GND |
@@ -50,3 +51,5 @@ To be added...
 | 10 | SDCS | CS for SD card of adafruit Adalogger FeatherWing |
 | 9 | battery monitor | Feather buit-in voltage divider |
 | 6 | RTC INT | RTC INT from adafruit Adalogger FeatherWing|
+
+Note that pins for SDCS and Slide switch is swapped from v1.0 (to match default of Adafruit Adalogger FeatherWing)

@@ -7,31 +7,31 @@
  Output logged to uSD at intervals set
 
  Author:  Shunya Sato
- Date:        15/07/18
- Version:     0.1
+ Date:        09-Aug-2018
+ Version:     1.0
 
 */
 
 ////////////////////////////////////////////////////////////
 #define ECHO_TO_SERIAL // Allows serial output if uncommented
 ////////////////////////////////////////////////////////////
-
+#include <Wire.h>
+#include "RTClib.h"
+#include <RTCZero.h>
 #include <SPI.h>
 #include <SD.h>
-#include <RTCZero.h>
 
 #include "sheet_music.h"
 
 #define DEBOUNCE 5  // button debouncer, how many ms to debounce, 5+ ms is usually plenty
-#define cardSelect 4  // Set the pin used for uSD
+#define cardSelect 5  // Set the pin used for uSD
 #define RED 13 // Red LED on Pin #13
-#define GREEN 8 // Green LED on Pin #8
+// #define GREEN 8 // Green LED on Pin #8
 #define VBATPIN A7    // Battery Voltage on Pin A7
 #define SPEAKER A0
 const int buttonPinA = 11;    // the number of the pushbutton pin
 const int buttonPinB = 12;    // the number of the pushbutton pin
 const int silentPin = 10;    // pin for set silent
-
 
 extern "C" char *sbrk(int i); //  Used by FreeRAm Function
 
@@ -43,18 +43,9 @@ extern "C" char *sbrk(int i); //  Used by FreeRAm Function
 
 const int SampleIntSeconds = 500;   //Simple Delay used for testing, ms i.e. 1000 = 1 sec
 
-const bool setTime = false;
-/* Change these values to set the current initial time */
-const byte hours = 14;
-const byte minutes = 00;
-const byte seconds = 0;
-/* Change these values to set the current initial date */
-const byte day = 15;
-const byte month = 7;
-const byte year = 18;
-
 /////////////// Global Objects ////////////////////
-RTCZero rtc;    // Create RTC object
+RTC_PCF8523 rtc8523; // external RTC to load time in setup
+RTCZero rtc;  // internal RTC to be used for interrupts
 File logfile;   // Create file object
 char filename[15]; // Varialbe for log file name on SD card
 float measuredvbat;   // Variable for battery voltage
@@ -77,25 +68,42 @@ enum songsType {
 
 //////////////    Setup   ///////////////////
 void setup() {
-
-  rtc.begin();    // Start the RTC in 24hr mode
-  if (setTime){
-    rtc.setTime(hours, minutes, seconds);   // Set the time
-    rtc.setDate(day, month, year);    // Set the date
-  }
-  NextAlarmMin = rtc.getMinutes(); // initialize starting minute
-  NextAlarmHour = rtc.getHours();  // initialize starting hour
-
   #ifdef ECHO_TO_SERIAL
     //while (! Serial); // Wait until Serial is ready
     delay(100); // delay to wait Serial is ready
     Serial.begin(115200);
-    Serial.println("\r\nFeather M0 Analog logger");
+    Serial.println("\r\nA/B logger");
   #endif
+
+  rtc.begin();    // Start the RTC in 24hr mode
+  rtc8523.begin();
+
+  if (! rtc8523.initialized()) {
+    #ifdef ECHO_TO_SERIAL
+      Serial.println("RTC8523 is NOT running!");
+    #endif
+    // following line sets the RTC to the date & time this sketch was compiled
+    rtc8523.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+
+  DateTime now = rtc8523.now();
+  // Set the time
+  rtc.setHours(now.hour());
+  rtc.setMinutes(now.minute());
+  rtc.setSeconds(now.second());
+  // Set the date
+  rtc.setDay(now.day());
+  rtc.setMonth(now.month());
+  rtc.setYear(now.year());
+
+  NextAlarmMin = now.minute(); // initialize starting minute
+  NextAlarmHour = now.hour();  // initialize starting hour
 
   // see if the card is present and can be initialized:
   if (!SD.begin(cardSelect)) {
-    Serial.println("Card init. failed! or Card not present");
+    #ifdef ECHO_TO_SERIAL
+      Serial.println("Card init. failed! or Card not present");
+    #endif
     error(2);     // Two red flashes means no card or card init failed.
   }
 
@@ -129,9 +137,7 @@ void setup() {
   pinMode(silentPin, INPUT_PULLUP);
 
   pinMode(RED, OUTPUT);
-  pinMode(GREEN, OUTPUT);
   digitalWrite(RED, LOW);
-  digitalWrite(GREEN, LOW);
 
   #ifdef ECHO_TO_SERIAL
     Serial.println("Logging ....");
@@ -155,9 +161,9 @@ void loop() {
   blink(RED,2);             // Quick blink to show we have a pulse
 
   while(pressedButton==0){
-//    #ifdef ECHO_TO_SERIAL
-//      Serial.print(".");
-//    #endif
+    // #ifdef ECHO_TO_SERIAL
+    //   Serial.print(".");
+    // #endif
     if ( (long)(millis()-expireMillis) >= 0 ){
       // break if 15 min has passed
       #ifdef ECHO_TO_SERIAL
@@ -205,7 +211,7 @@ void loop() {
   SdOutput();                 // Output to uSD card
   //logfile.flush();
   logfile.close();
-  blink(GREEN,2);
+  blink(RED,2);
 
   //setAlarmSec();
   //setAlarmMin();
@@ -255,6 +261,7 @@ void loop() {
   #endif
 
   rtc.standbyMode();    // Sleep until next alarm match
+  // Code re-starts here after sleep !
 
   #ifdef ECHO_TO_SERIAL
     USBDevice.attach();   // Re-attach the USB, audible sound on windows machines
@@ -263,8 +270,6 @@ void loop() {
     delay(100); // delay to wait Serial is ready
   #endif
 
-
-  // Code re-starts here after sleep !
 }
 
 ///////////////   Functions   //////////////////
@@ -377,7 +382,7 @@ void error(uint8_t errno) {
   }
 }
 
-// blink out an error code, Red on pin #13 or Green on pin #8
+// blink out an error code, Red on pin #13
 void blink(uint8_t LED, uint8_t flashes) {
   uint8_t i;
   for (i=0; i<flashes; i++) {
