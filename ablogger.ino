@@ -65,6 +65,14 @@ enum songsType {
   MARIO_COIN,
   SHAKA
 };
+enum stateType {
+  SLEEP = 0,
+  WAKE_BY_PIN_A,
+  WAKE_BY_PIN_B,
+  WAKE_BY_RTC,
+  RUNNING
+};
+volatile byte state = SLEEP;
 
 //////////////    Setup   ///////////////////
 void setup() {
@@ -150,6 +158,47 @@ void loop() {
   #ifdef ECHO_TO_SERIAL
     Serial.println("start of loop function");
   #endif
+
+  if (state == SLEEP) {
+    // suporsed to run only once after reset
+    #ifdef ECHO_TO_SERIAL
+      Serial.println("SLEEP");
+    #endif
+    go_sleep();
+  }
+  else if (state == WAKE_BY_PIN_A) {
+    // ButtonA is pressed
+    #ifdef ECHO_TO_SERIAL
+      Serial.println("WAKE_BY_PIN_A");
+    #endif
+    detach_all();
+    blink(RED, 4);
+    go_sleep();
+  }
+  else if (state == WAKE_BY_PIN_B) {
+    // this loop runs at every hour
+    #ifdef ECHO_TO_SERIAL
+      Serial.println("WAKE_BY_PIN_B");
+    #endif
+    detach_all();
+    blink(RED, 8);
+    go_sleep();
+  }
+  else if (state == WAKE_BY_RTC) {
+    // this loop runs at every hour
+    #ifdef ECHO_TO_SERIAL
+      Serial.println("WAKE_BY_RTC");
+    #endif
+    detach_all();
+    if (digitalRead(silentPin) == HIGH){
+      play_a_song(MARIO_COIN);
+    }
+    blink(RED, 2);
+    go_sleep();
+  }
+  else {
+    // running
+  }
 
   pressedButton = 0;
   unsigned long startMillis = millis();
@@ -273,6 +322,38 @@ void loop() {
 }
 
 ///////////////   Functions   //////////////////
+
+void go_sleep() {
+    attachInterrupt(digitalPinToInterrupt(buttonPinA), pinA_isr, LOW);
+    attachInterrupt(digitalPinToInterrupt(buttonPinB), pinA_isr, LOW);
+
+    AlarmTime = rtc.getSeconds()+10; // Adds 10 seconds to alarm time
+    AlarmTime = AlarmTime % 60; // checks for roll over 60 seconds and corrects
+
+    rtc.setAlarmSeconds(AlarmTime); // Wakes at next alarm time
+    rtc.enableAlarm(rtc.MATCH_SS); // Match seconds only
+    rtc.attachInterrupt(rtc_isr);
+
+    rtc.standbyMode();    // Sleep until next alarm match
+    //standby();
+}
+
+void detach_all() {
+    detachInterrupt(digitalPinToInterrupt(buttonPinA));
+    detachInterrupt(digitalPinToInterrupt(buttonPinB));
+    rtc.detachInterrupt();
+    rtc.disableAlarm();
+}
+
+void pinA_isr() {
+  state = WAKE_BY_PIN_A;
+}
+void pinB_isr() {
+  state = WAKE_BY_PIN_B;
+}
+void rtc_isr() {
+  state = WAKE_BY_RTC;
+}
 
 void setAlarmSec(){
   ///////// Interval Timing and Sleep Code ////////////////
