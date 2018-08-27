@@ -81,17 +81,26 @@ void setup() {
     Serial.println("\r\nA/B logger");
   #endif
 
+  pinMode(buttonPinA, INPUT_PULLUP);
+  pinMode(buttonPinB, INPUT_PULLUP);
+  pinMode(silentPin, INPUT_PULLUP);
+
+  pinMode(RED, OUTPUT);
+  digitalWrite(RED, LOW);
+
   rtc.begin();    // Start the RTC in 24hr mode
   rtc8523.begin();
 
-//  if (! rtc8523.initialized()) {
-//    #ifdef ECHO_TO_SERIAL
-//      Serial.println("RTC8523 is NOT running!");
-//    #endif
-//    // following line sets the RTC to the date & time this sketch was compiled
-//    rtc8523.adjust(DateTime(F(__DATE__), F(__TIME__)));
-//  }
-  rtc8523.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  //  if (! rtc8523.initialized()) {
+  //    #ifdef ECHO_TO_SERIAL
+  //      Serial.println("RTC8523 is NOT running!");
+  //    #endif
+  //    // following line sets the RTC to the date & time this sketch was compiled
+  //    rtc8523.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  //  }
+  if (digitalRead(buttonPinA) == LOW) {
+    rtc8523.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
 
   DateTime now = rtc8523.now();
   // Set the time
@@ -103,45 +112,7 @@ void setup() {
   rtc.setMonth(now.month());
   rtc.setYear(now.year()-2000);  // now.year() returns 2018 but rtc.setYear() expects 18
 
-  // see if the card is present and can be initialized:
-  if (!SD.begin(cardSelect)) {
-    #ifdef ECHO_TO_SERIAL
-      Serial.println("Card init. failed! or Card not present");
-    #endif
-    error(2);     // Two red flashes means no card or card init failed.
-  }
-
-  strcpy(filename, "ANALOG00.CSV");
-  for (uint8_t i = 0; i < 100; i++) {
-    filename[6] = '0' + i/10;
-    filename[7] = '0' + i%10;
-    // create if does not exist, do not open existing, write, sync after write
-    if (! SD.exists(filename)) {
-      break;
-    }
-  }
-
-  logfile = SD.open(filename, FILE_WRITE);
-  if( ! logfile ) {
-    #ifdef ECHO_TO_SERIAL
-      Serial.print("Couldnt create ");
-      Serial.println(filename);
-    #endif
-    error(3);
-  }
-  #ifdef ECHO_TO_SERIAL
-    Serial.print("Writing to ");
-    Serial.println(filename);
-  #endif
-  writeHeader();
-  logfile.close();
-
-  pinMode(buttonPinA, INPUT_PULLUP);
-  pinMode(buttonPinB, INPUT_PULLUP);
-  pinMode(silentPin, INPUT_PULLUP);
-
-  pinMode(RED, OUTPUT);
-  digitalWrite(RED, LOW);
+  strcpy(filename, "ANALOG.CSV");
 
   #ifdef ECHO_TO_SERIAL
     Serial.println("Logging ....");
@@ -204,44 +175,144 @@ void log_btn(int btn) {
     SerialOutput(btn);           // Only logs to serial if ECHO_TO_SERIAL is uncommented at start of code
   #endif
 
-  logfile = SD.open(filename, FILE_WRITE);
-  if( ! logfile ) {
+  if (SdCardExist()){
+    bool needHeader = !SD.exists(filename);
+    logfile = SD.open(filename, FILE_WRITE);
+    if( ! logfile ) {
+      #ifdef ECHO_TO_SERIAL
+        Serial.print("Couldnt create ");
+        Serial.println(filename);
+      #endif
+      error(3);
+      return;
+    }
+    else {
+      #ifdef ECHO_TO_SERIAL
+        Serial.print("Writing to ");
+        Serial.println(filename);
+      #endif
+      if (needHeader) {
+        writeHeader();
+      }
+      SdOutput(btn);                 // Output to uSD card
+      logfile.flush();
+      logfile.close();
+      SD.end();
+    }
+  }
+}
+
+bool SdCardExist(){
+  // see if the card is present and can be initialized:
+  if (!SD.begin(cardSelect)) {
     #ifdef ECHO_TO_SERIAL
-      Serial.print("Couldnt create ");
-      Serial.println(filename);
+      Serial.println("Card init. failed! or Card not present");
     #endif
-    //error(3);
-    blink(RED, 10);
+    error(2);     // Two red flashes means no card or card init failed.
+    return false;
+  } else {
+    return true;
   }
-  else {
-    SdOutput(btn);                 // Output to uSD card
-    logfile.flush();
-    logfile.close();
-    //blink(RED,2);
+}
+
+// Write data header.
+void writeHeader() {
+  logfile.println("DD/MM/YYYY hh:mm:ss, Button, Battery Voltage");
+}
+
+// Debbugging output of time/date and battery voltage
+void SerialOutput(int pressedButton) {
+
+  Serial.print(rtc.getDay());
+  Serial.print("/");
+  Serial.print(rtc.getMonth());
+  Serial.print("/");
+  Serial.print(rtc.getYear()+2000);
+  Serial.print(" ");
+  Serial.print(rtc.getHours());
+  Serial.print(":");
+  if(rtc.getMinutes() < 10)
+    Serial.print('0');      // Trick to add leading zero for formatting
+  Serial.print(rtc.getMinutes());
+  Serial.print(":");
+  if(rtc.getSeconds() < 10)
+    Serial.print('0');      // Trick to add leading zero for formatting
+  Serial.print(rtc.getSeconds());
+  Serial.print(",");
+  Serial.print(pressedButton);   // Print battery voltage
+  Serial.print(",");
+  Serial.print(BatteryVoltage ());   // Print battery voltage
+  Serial.print(",");
+  Serial.println(freeram ());
+}
+
+// Print data and time followed by battery voltage to SD card
+void SdOutput(int pressedButton) {
+
+  //if (!file.sync() || file.getWriteError()) {
+  //  error("write error");
+  //  error(3);     // Three red flashes means write failed.
+  //}
+
+  // Formatting for file out put dd/mm/yyyy hh:mm:ss, [sensor output]
+  uint8_t day = rtc.getDay();
+  if (day < 10){
+    logfile.print("0");
   }
+  logfile.print(day);
+  logfile.print("/");
+  uint8_t month = rtc.getMonth();
+  if (month < 10){
+    logfile.print("0");
+  }
+  logfile.print(month);
+  logfile.print("/");
+  logfile.print(rtc.getYear()+2000);
+  logfile.print(" ");
+  uint8_t hour = rtc.getHours();
+  if (hour < 10){
+    logfile.print("0");
+  }
+  logfile.print(hour);
+  logfile.print(":");
+  uint8_t minute = rtc.getMinutes();
+  if(minute < 10)
+    logfile.print('0');      // Trick to add leading zero for formatting
+  logfile.print(minute);
+  logfile.print(":");
+  uint8_t second = rtc.getSeconds();
+  if(second < 10)
+    logfile.print('0');      // Trick to add leading zero for formatting
+  logfile.print(second);
+  logfile.print(",");
+  logfile.print(pressedButton);   // Print selected button
+  logfile.print(",");
+  logfile.println(BatteryVoltage ());   // Print battery voltage
 }
 
 void go_sleep() {
     setAlarm();
 
     #ifdef ECHO_TO_SERIAL
-      Serial.end();
-      USBDevice.detach(); // Safely detach the USB prior to sleeping
+      //Serial.end();
+      //USBDevice.detach(); // Safely detach the USB prior to sleeping
     #endif
 
     attachInterrupt(digitalPinToInterrupt(buttonPinA), pinA_isr, LOW);
     attachInterrupt(digitalPinToInterrupt(buttonPinB), pinB_isr, LOW);
 
-    rtc.standbyMode();    // Sleep until next alarm match
-    //standby();
-    // Code re-starts here after sleep !
+    #ifndef ECHO_TO_SERIAL
+      rtc.standbyMode();    // Sleep until next alarm match
+      //standby();
+      // Code re-starts here after sleep !
+    #endif
 
     #ifdef ECHO_TO_SERIAL
-      USBDevice.attach();   // Re-attach the USB, audible sound on windows machines
-      delay(1000);  // Delay added to make serial more reliable
-      Serial.begin(115200);
-      while (! Serial); // Wait until Serial is ready
-      delay(100); // delay to wait Serial is ready
+      //USBDevice.attach();   // Re-attach the USB, audible sound on windows machines
+      //delay(1000);  // Delay added to make serial more reliable
+      //Serial.begin(115200);
+      //while (! Serial); // Wait until Serial is ready
+      //delay(100); // delay to wait Serial is ready
     #endif
 
 }
@@ -362,90 +433,15 @@ void setAlamAtMinute() {
   delay(50); // Brief delay prior to sleeping not really sure its required
 }
 
-// Debbugging output of time/date and battery voltage
-void SerialOutput(int pressedButton) {
-
-  Serial.print(rtc.getDay());
-  Serial.print("/");
-  Serial.print(rtc.getMonth());
-  Serial.print("/");
-  Serial.print(rtc.getYear()+2000);
-  Serial.print(" ");
-  Serial.print(rtc.getHours());
-  Serial.print(":");
-  if(rtc.getMinutes() < 10)
-    Serial.print('0');      // Trick to add leading zero for formatting
-  Serial.print(rtc.getMinutes());
-  Serial.print(":");
-  if(rtc.getSeconds() < 10)
-    Serial.print('0');      // Trick to add leading zero for formatting
-  Serial.print(rtc.getSeconds());
-  Serial.print(",");
-  Serial.print(pressedButton);   // Print battery voltage
-  Serial.print(",");
-  Serial.print(BatteryVoltage ());   // Print battery voltage
-  Serial.print(",");
-  Serial.println(freeram ());
-}
-
-// Print data and time followed by battery voltage to SD card
-void SdOutput(int pressedButton) {
-
-  //if (!file.sync() || file.getWriteError()) {
-  //  error("write error");
-  //  error(3);     // Three red flashes means write failed.
-  //}
-
-  // Formatting for file out put dd/mm/yyyy hh:mm:ss, [sensor output]
-  uint8_t day = rtc.getDay();
-  if (day < 10){
-    logfile.print("0");
-  }
-  logfile.print(day);
-  logfile.print("/");
-  uint8_t month = rtc.getMonth();
-  if (month < 10){
-    logfile.print("0");
-  }
-  logfile.print(month);
-  logfile.print("/");
-  logfile.print(rtc.getYear()+2000);
-  logfile.print(" ");
-  uint8_t hour = rtc.getHours();
-  if (hour < 10){
-    logfile.print("0");
-  }
-  logfile.print(hour);
-  logfile.print(":");
-  uint8_t minute = rtc.getMinutes();
-  if(minute < 10)
-    logfile.print('0');      // Trick to add leading zero for formatting
-  logfile.print(minute);
-  logfile.print(":");
-  uint8_t second = rtc.getSeconds();
-  if(second < 10)
-    logfile.print('0');      // Trick to add leading zero for formatting
-  logfile.print(second);
-  logfile.print(",");
-  logfile.print(pressedButton);   // Print selected button
-  logfile.print(",");
-  logfile.println(BatteryVoltage ());   // Print battery voltage
-}
-
-// Write data header.
-void writeHeader() {
-  logfile.println("DD/MM/YYYY hh:mm:ss, Button, Battery Voltage");
-}
-
 // blink out an error code
 void error(uint8_t errno) {
-  while(1) {
+  for (int j = 0; j<10; j++) {
     uint8_t i;
     for (i=0; i<errno; i++) {
       digitalWrite(RED, HIGH);
-      delay(100);
+      delay(50);
       digitalWrite(RED, LOW);
-      delay(100);
+      delay(50);
     }
     for (i=errno; i<10; i++) {
       delay(200);
